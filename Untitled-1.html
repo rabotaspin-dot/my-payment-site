@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nexus Exchange</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="telegram.org"></script>
+    <style>
+        @import url('fonts.googleapis.com');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #030712;
+            background-image: radial-gradient(circle at 50% -20%, #1e293b 0%, #030712 80%);
+            color: white; min-height: 100vh; overflow: hidden;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Красивый слайдер переключения */
+        .toggle-container {
+            position: relative;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            height: 44px;
+        }
+        .slider {
+            position: absolute;
+            top: 2px; left: 2px;
+            width: calc(50% - 2px); height: calc(100% - 4px);
+            background: white; border-radius: 10px;
+            transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            box-shadow: 0 0 15px rgba(255,255,255,0.2);
+        }
+        .toggle-usd .slider { transform: translateX(100%); }
+        .toggle-btn { position: relative; z-index: 10; flex: 1; text-align: center; font-weight: 800; font-size: 13px; cursor: pointer; transition: color 0.3s; }
+        .active-text { color: black !important; }
+
+        input { font-family: 'JetBrains Mono', monospace; outline: none; }
+        
+        .admin-mode { border-color: #f59e0b !important; box-shadow: 0 0 20px rgba(245, 158, 11, 0.2); }
+        .hidden { display: none; }
+    </style>
+</head>
+<body class="p-6">
+
+    <!-- MAIN INTERFACE -->
+    <div id="main-ui">
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h1 class="text-xl font-black tracking-tighter italic">NEXUS_EX</h1>
+                <p id="rate-display" class="text-[10px] text-cyan-500 font-mono tracking-widest uppercase">Loading rates...</p>
+            </div>
+            <div class="h-2 w-2 rounded-full bg-cyan-500 animate-pulse"></div>
+        </div>
+
+        <!-- Animated Toggle -->
+        <div id="toggle-root" class="toggle-container flex items-center rounded-xl mb-6 p-1">
+            <div class="slider"></div>
+            <div onclick="setCurrency('TON')" id="txt-ton" class="toggle-btn active-text">TON</div>
+            <div onclick="setCurrency('USD')" id="txt-usd" class="toggle-btn text-gray-500">USD</div>
+        </div>
+
+        <!-- Blocks -->
+        <div class="glass-card rounded-2xl p-5 mb-4">
+            <div class="flex justify-between text-[10px] font-bold text-gray-500 uppercase mb-2">
+                <span id="label-from">SENDING TON</span>
+                <span>SRC_NODE</span>
+            </div>
+            <input type="number" id="input-left" placeholder="0.00" class="w-full bg-transparent text-4xl font-medium">
+        </div>
+
+        <div class="glass-card rounded-2xl p-5 mt-2">
+            <div class="flex justify-between text-[10px] font-bold text-gray-500 uppercase mb-2">
+                <span>RECEIVING RUB</span>
+                <span>ESTIMATE</span>
+            </div>
+            <input type="text" id="input-right" placeholder="0.00" class="w-full bg-transparent text-4xl font-medium text-cyan-400" readonly>
+        </div>
+
+        <button onclick="handleExchange()" class="w-full mt-8 py-4 bg-white text-black rounded-2xl font-black uppercase shadow-2xl active:scale-95 transition-all">
+            Execute Transaction
+        </button>
+    </div>
+
+    <!-- ADMIN PANEL (Hidden by default) -->
+    <div id="admin-ui" class="hidden">
+        <h2 class="text-amber-500 font-black text-2xl mb-6">ROOT_ADMIN_PANEL</h2>
+        <div class="space-y-4">
+            <div class="glass-card rounded-xl p-4 admin-mode">
+                <label class="block text-[10px] mb-2 text-amber-500/50">NEW_TON_RATE (RUB)</label>
+                <input type="number" id="admin-ton" class="bg-transparent w-full text-2xl text-amber-500">
+            </div>
+            <div class="glass-card rounded-xl p-4 admin-mode">
+                <label class="block text-[10px] mb-2 text-amber-500/50">NEW_USD_RATE (RUB)</label>
+                <input type="number" id="admin-usd" class="bg-transparent w-full text-2xl text-amber-500">
+            </div>
+            <button onclick="saveRates()" class="w-full py-4 bg-amber-500 text-black rounded-xl font-bold uppercase mt-4">Save Config</button>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+
+        let currentCurrency = 'TON';
+        // Значения по умолчанию
+        let rates = { TON: 645.20, USD: 92.10 };
+
+        // Элементы
+        const inputLeft = document.getElementById('input-left');
+        const inputRight = document.getElementById('input-right');
+        const toggleRoot = document.getElementById('toggle-root');
+        const rateDisplay = document.getElementById('rate-display');
+
+        function updateDisplay() {
+            rateDisplay.innerText = `1 ${currentCurrency} = ${rates[currentCurrency].toFixed(2)} RUB`;
+            calculate();
+        }
+
+        function setCurrency(cur) {
+            if(currentCurrency === cur) return;
+            currentCurrency = cur;
+            tg.HapticFeedback.selectionChanged();
+            
+            // Анимация слайдера
+            toggleRoot.classList.toggle('toggle-usd', cur === 'USD');
+            document.getElementById('txt-ton').classList.toggle('active-text', cur === 'TON');
+            document.getElementById('txt-ton').classList.toggle('text-gray-500', cur !== 'TON');
+            document.getElementById('txt-usd').classList.toggle('active-text', cur === 'USD');
+            document.getElementById('txt-usd').classList.toggle('text-gray-500', cur !== 'USD');
+            
+            document.getElementById('label-from').innerText = `SENDING ${cur}`;
+            updateDisplay();
+        }
+
+        function calculate() {
+            const val = parseFloat(inputLeft.value) || 0;
+            const res = val * rates[currentCurrency];
+            inputRight.value = res > 0 ? res.toLocaleString('ru-RU', {minimumFractionDigits: 2}) : '';
+        }
+
+        inputLeft.addEventListener('input', calculate);
+
+        function handleExchange() {
+            // Пасхалка для админки
+            if (inputLeft.value === "111222333444555666777888999") {
+                openAdmin();
+                return;
+            }
+
+            tg.HapticFeedback.notificationOccurred('success');
+            tg.sendData(JSON.stringify({
+                type: currentCurrency,
+                amount: inputLeft.value,
+                total_rub: inputRight.value,
+                rate_at_moment: rates[currentCurrency]
+            }));
+        }
+
+        // Логика админки
+        function openAdmin() {
+            tg.HapticFeedback.impactOccurred('heavy');
+            document.getElementById('main-ui').classList.add('hidden');
+            document.getElementById('admin-ui').classList.remove('hidden');
+            document.getElementById('admin-ton').value = rates.TON;
+            document.getElementById('admin-usd').value = rates.USD;
+        }
+
+        function saveRates() {
+            rates.TON = parseFloat(document.getElementById('admin-ton').value) || rates.TON;
+            rates.USD = parseFloat(document.getElementById('admin-usd').value) || rates.USD;
+            
+            document.getElementById('admin-ui').classList.add('hidden');
+            document.getElementById('main-ui').classList.remove('hidden');
+            updateDisplay();
+            tg.HapticFeedback.notificationOccurred('success');
+            inputLeft.value = ''; // Сброс пароля
+        }
+
+        // Инициализация
+        updateDisplay();
+    </script>
+</body>
+</html>
