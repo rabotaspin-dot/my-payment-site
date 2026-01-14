@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Exchange</title>
+
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #030712;
+            background-image: radial-gradient(circle at 50% -20%, #1e293b 0%, #030712 80%);
+            color: white;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .toggle-container {
+            position: relative;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            height: 44px;
+        }
+
+        .slider {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: calc(50% - 2px);
+            height: calc(100% - 4px);
+            background: white;
+            border-radius: 10px;
+            transition: transform 0.3s cubic-bezier(0.68,-0.55,0.265,1.55);
+        }
+
+        .toggle-usd .slider {
+            transform: translateX(100%);
+        }
+
+        .toggle-btn {
+            position: relative;
+            z-index: 10;
+            flex: 1;
+            text-align: center;
+            font-weight: 800;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .active-text {
+            color: black !important;
+        }
+
+        input {
+            background: transparent;
+            outline: none;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .admin-mode {
+            border-color: #f59e0b !important;
+            box-shadow: 0 0 20px rgba(245,158,11,0.25);
+        }
+    </style>
+</head>
+
+<body class="p-6">
+
+<!-- ================= MAIN UI ================= -->
+<div id="main-ui">
+
+    <div class="flex items-start justify-between mb-8">
+        <div>
+            <h1 class="text-xl font-black tracking-tighter italic">DUCK EXCHANGE</h1>
+            <p id="rate-display" class="text-[10px] text-cyan-500 font-mono uppercase tracking-widest"></p>
+
+            <!-- ADMIN BUTTON -->
+            <button id="admin-btn"
+                onclick="openAdmin()"
+                class="hidden mt-2 text-[10px] uppercase font-bold text-amber-400 border border-amber-400/30 px-3 py-1 rounded-lg">
+                Admin
+            </button>
+        </div>
+
+        <div class="h-2 w-2 rounded-full bg-cyan-500 animate-pulse"></div>
+    </div>
+
+    <!-- TOGGLE -->
+    <div id="toggle-root" class="toggle-container flex items-center rounded-xl mb-6 p-1">
+        <div class="slider"></div>
+        <div class="toggle-btn active-text" id="txt-ton" onclick="setCurrency('TON')">TON</div>
+        <div class="toggle-btn text-gray-500" id="txt-usd" onclick="setCurrency('USD')">USD</div>
+    </div>
+
+    <!-- FROM -->
+    <div class="glass-card rounded-2xl p-5 mb-4">
+        <div class="flex justify-between text-[10px] font-bold text-gray-500 uppercase mb-2">
+            <span id="label-from">SENDING TON</span>
+            <span>SRC_NODE</span>
+        </div>
+        <input id="input-left" type="number" placeholder="0.00" class="w-full text-4xl font-medium">
+    </div>
+
+    <!-- TO -->
+    <div class="glass-card rounded-2xl p-5">
+        <div class="flex justify-between text-[10px] font-bold text-gray-500 uppercase mb-2">
+            <span>RECEIVING RUB</span>
+            <span>ESTIMATE</span>
+        </div>
+        <input id="input-right" type="text" readonly
+               class="w-full text-4xl font-medium text-cyan-400">
+    </div>
+
+    <button onclick="handleExchange()"
+        class="w-full mt-8 py-4 bg-white text-black rounded-2xl font-black uppercase active:scale-95 transition">
+        Execute Transaction
+    </button>
+</div>
+
+<!-- ================= ADMIN UI ================= -->
+<div id="admin-ui" class="hidden">
+    <h2 class="text-amber-500 font-black text-2xl mb-6">ROOT_ADMIN_PANEL</h2>
+
+    <div class="space-y-4">
+        <div class="glass-card rounded-xl p-4 admin-mode">
+            <label class="text-[10px] text-amber-400/60">TON → RUB</label>
+            <input id="admin-ton" type="number" class="w-full text-2xl text-amber-400">
+        </div>
+
+        <div class="glass-card rounded-xl p-4 admin-mode">
+            <label class="text-[10px] text-amber-400/60">USD → RUB</label>
+            <input id="admin-usd" type="number" class="w-full text-2xl text-amber-400">
+        </div>
+
+        <button onclick="saveRates()"
+            class="w-full py-4 bg-amber-500 text-black rounded-xl font-bold uppercase">
+            Save
+        </button>
+    </div>
+</div>
+
+<!-- ================= SCRIPT ================= -->
+<script>
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+
+    /* ===== ADMIN CONFIG ===== */
+    const ADMIN_IDS = [
+        2126477380 // <-- ТВОЙ TELEGRAM ID
+    ];
+
+    const userId = tg.initDataUnsafe?.user?.id;
+
+    function isAdmin() {
+        return ADMIN_IDS.includes(userId);
+    }
+
+    /* ===== STATE ===== */
+    let currentCurrency = 'TON';
+    let rates = { TON: 645.20, USD: 92.10 };
+
+    const inputLeft = document.getElementById('input-left');
+    const inputRight = document.getElementById('input-right');
+    const toggleRoot = document.getElementById('toggle-root');
+    const rateDisplay = document.getElementById('rate-display');
+
+    /* ===== UI ===== */
+    function updateDisplay() {
+        rateDisplay.innerText = `1 ${currentCurrency} = ${rates[currentCurrency].toFixed(2)} RUB`;
+        calculate();
+    }
+
+    function setCurrency(cur) {
+        if (currentCurrency === cur) return;
+        currentCurrency = cur;
+
+        tg.HapticFeedback.selectionChanged();
+
+        toggleRoot.classList.toggle('toggle-usd', cur === 'USD');
+        document.getElementById('txt-ton').classList.toggle('active-text', cur === 'TON');
+        document.getElementById('txt-usd').classList.toggle('active-text', cur === 'USD');
+
+        document.getElementById('label-from').innerText = `SENDING ${cur}`;
+        updateDisplay();
+    }
+
+    function calculate() {
+        const val = parseFloat(inputLeft.value) || 0;
+        const res = val * rates[currentCurrency];
+        inputRight.value = res ? res.toLocaleString('ru-RU', { minimumFractionDigits: 2 }) : '';
+    }
+
+    inputLeft.addEventListener('input', calculate);
+
+    function handleExchange() {
+        tg.HapticFeedback.notificationOccurred('success');
+
+        tg.sendData(JSON.stringify({
+            currency: currentCurrency,
+            amount: inputLeft.value,
+            rub: inputRight.value,
+            rate: rates[currentCurrency]
+        }));
+    }
+
+    /* ===== ADMIN ===== */
+    function openAdmin() {
+        if (!isAdmin()) return;
+
+        tg.HapticFeedback.impactOccurred('heavy');
+        document.getElementById('main-ui').classList.add('hidden');
+        document.getElementById('admin-ui').classList.remove('hidden');
+
+        document.getElementById('admin-ton').value = rates.TON;
+        document.getElementById('admin-usd').value = rates.USD;
+    }
+
+    function saveRates() {
+        rates.TON = parseFloat(document.getElementById('admin-ton').value) || rates.TON;
+        rates.USD = parseFloat(document.getElementById('admin-usd').value) || rates.USD;
+
+        document.getElementById('admin-ui').classList.add('hidden');
+        document.getElementById('main-ui').classList.remove('hidden');
+
+        updateDisplay();
+        tg.HapticFeedback.notificationOccurred('success');
+    }
+
+    /* ===== INIT ===== */
+    if (isAdmin()) {
+        document.getElementById('admin-btn').classList.remove('hidden');
+    }
+
+    updateDisplay();
+</script>
+
+</body>
+</html>
